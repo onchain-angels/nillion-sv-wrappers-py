@@ -1,0 +1,101 @@
+import nilql
+
+
+# Simple "enum" for key types
+class KeyType:
+    CLUSTER = "cluster"
+    SECRET = "secret"
+
+
+class NilQLWrapper:
+    def __init__(
+        self, cluster, operation="store", secret_key=None, key_type=KeyType.CLUSTER
+    ):
+        """
+        :param cluster: Configuration of the cluster (e.g., a dictionary containing nodes)
+        :param operation: Desired operation (e.g., 'store')
+        :param secret_key: (Optional) pre-generated secret key
+        :param key_type: Type of key to be used ("cluster" or "secret")
+        """
+        self.cluster = cluster
+        self.secret_key = secret_key
+        self.operation = {operation: True}
+        self.key_type = key_type
+
+    async def init(self):
+        """
+        Inicializa o wrapper gerando (ou utilizando) a chave apropriada para o cluster.
+        Deve ser chamado antes de qualquer operação de criptografia ou descriptografia.
+        """
+        if self.secret_key is None and self.key_type == KeyType.SECRET:
+            self.secret_key = nilql.SecretKey.generate(self.cluster, self.operation)
+        if self.key_type == KeyType.CLUSTER:
+            self.secret_key = nilql.ClusterKey.generate(self.cluster, self.operation)
+
+    async def encrypt(self, data):
+        """
+        Criptografa os dados utilizando a chave inicializada.
+        Retorna os _shares_ criptografados.
+        """
+        if not self.secret_key:
+            raise Exception("NilQLWrapper not initialized. Call init() first.")
+        shares = nilql.encrypt(self.secret_key, data)
+        return shares
+
+    async def decrypt(self, shares):
+        """
+        Descriptografa os _shares_ utilizando a chave inicializada.
+        """
+        if not self.secret_key:
+            raise Exception("NilQLWrapper not initialized. Call init() first.")
+        decryptedData = nilql.decrypt(self.secret_key, shares)
+        return decryptedData
+
+    async def prepare_and_allot(self, data):
+        """
+        Recursively traverses the input object and, for each field containing the "%allot" key,
+        encrypts the associated value and prepares the document for share distribution.
+        """
+        if not self.secret_key:
+            raise Exception("NilQLWrapper not initialized. Call init() first.")
+
+        async def encrypt_deep(obj):
+            if not isinstance(obj, (dict, list)):
+                return obj
+
+            encrypted = [] if isinstance(obj, list) else {}
+
+            if isinstance(obj, dict):
+                for key, value in obj.items():
+                    if isinstance(value, dict):
+                        if "%allot" in value:
+                            print(f"Encrypting value for key {key}: {value['%allot']}")
+                            encrypted_value = await self.encrypt(value["%allot"])
+                            print(f"Encrypted value: {encrypted_value}")
+                            encrypted[key] = {"%allot": encrypted_value}
+                            print(f"After %allot: {encrypted[key]}")
+                        else:
+                            encrypted[key] = await encrypt_deep(value)
+                    else:
+                        encrypted[key] = value
+            else:  # list
+                for item in obj:
+                    encrypted_item = await encrypt_deep(item)
+                    encrypted.append(encrypted_item)
+
+            return encrypted
+
+        encrypted_data = await encrypt_deep(data)
+        print(f"Before allot: {encrypted_data}")
+        result = nilql.allot(encrypted_data)
+        print(f"After allot: {result}")
+        return result
+
+    async def unify(self, shares):
+        """
+        Recombina os _shares_ para reconstruir o documento original (descriptografado).
+        """
+        if not self.secret_key:
+            raise Exception("NilQLWrapper not initialized. Call init() first.")
+        unifiedResult = nilql.unify(self.secret_key, shares)
+        return unifiedResult
