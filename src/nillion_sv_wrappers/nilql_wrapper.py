@@ -69,11 +69,8 @@ class NilQLWrapper:
                 for key, value in obj.items():
                     if isinstance(value, dict):
                         if "%allot" in value:
-                            print(f"Encrypting value for key {key}: {value['%allot']}")
                             encrypted_value = await self.encrypt(value["%allot"])
-                            print(f"Encrypted value: {encrypted_value}")
                             encrypted[key] = {"%allot": encrypted_value}
-                            print(f"After %allot: {encrypted[key]}")
                         else:
                             encrypted[key] = await encrypt_deep(value)
                     else:
@@ -86,9 +83,7 @@ class NilQLWrapper:
             return encrypted
 
         encrypted_data = await encrypt_deep(data)
-        print(f"Before allot: {encrypted_data}")
         result = nilql.allot(encrypted_data)
-        print(f"After allot: {result}")
         return result
 
     async def unify(self, shares):
